@@ -19,6 +19,9 @@ from selenium.webdriver.support import expected_conditions as EC
 import pandas as pd
 
 # Configure logging
+# Ensure logs directory exists
+os.makedirs('logs', exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
