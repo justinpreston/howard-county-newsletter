@@ -33,12 +33,17 @@ class EmergencyAlertMonitor:
         self.data_dir = "data/emergency"
         os.makedirs(self.data_dir, exist_ok=True)
         
-        # Emergency feed sources
+        # Emergency feed sources (updated with working URLs)
         self.feeds = {
-            'howard_county_alerts': 'https://www.howardcountymd.gov/emergency-alerts/rss',
-            'weather_alerts': 'https://alerts.weather.gov/cap/md.php?x=1',
-            'hcpss_alerts': 'https://www.hcpss.org/news/alerts/rss',
-            'traffic_incidents': 'https://chart.maryland.gov/rss/incidents.xml'
+            'hcpss_alerts': 'https://www.hcpss.org/news/alerts/feed/',  # School system alerts (working)
+            'weather_nws': 'https://alerts.weather.gov/cap/wwaatmget.php?x=MDC027&y=0',  # NWS Howard County alerts
+            'maryland_511': 'https://www.md511.maryland.gov/rss/incidents.rss',  # Maryland traffic incidents
+        }
+        
+        # Web scraping sources (when RSS feeds aren't available)
+        self.web_sources = {
+            'howard_county_alerts': 'https://www.howardcountymd.gov/emergency-management',
+            'howard_county_news': 'https://www.howardcountymd.gov/news'
         }
         
         # Keywords that indicate critical alerts
@@ -55,11 +60,12 @@ class EmergencyAlertMonitor:
         })
 
     def check_all_feeds(self) -> Dict[str, Any]:
-        """Check all emergency feeds for new alerts"""
+        """Check all emergency feeds and web sources for new alerts"""
         all_alerts = []
         critical_alerts = []
         feed_statuses = {}
         
+        # Check RSS feeds
         for feed_name, feed_url in self.feeds.items():
             logger.info(f"Checking {feed_name} feed")
             
@@ -83,6 +89,34 @@ class EmergencyAlertMonitor:
             except Exception as e:
                 logger.error(f"Error checking {feed_name}: {e}")
                 feed_statuses[feed_name] = {
+                    'status': 'error',
+                    'error': str(e),
+                    'last_checked': datetime.utcnow().isoformat()
+                }
+        
+        # Check web sources (scraping)
+        for source_name, source_url in self.web_sources.items():
+            logger.info(f"Scraping {source_name} website")
+            
+            try:
+                alerts = self.scrape_web_source(source_url, source_name)
+                all_alerts.extend(alerts)
+                
+                critical = [alert for alert in alerts if self.is_critical_alert(alert)]
+                critical_alerts.extend(critical)
+                
+                feed_statuses[source_name] = {
+                    'status': 'success',
+                    'alerts_found': len(alerts),
+                    'critical_found': len(critical),
+                    'last_checked': datetime.utcnow().isoformat()
+                }
+                
+                logger.info(f"{source_name}: {len(alerts)} alerts, {len(critical)} critical")
+                
+            except Exception as e:
+                logger.error(f"Error scraping {source_name}: {e}")
+                feed_statuses[source_name] = {
                     'status': 'error',
                     'error': str(e),
                     'last_checked': datetime.utcnow().isoformat()
@@ -217,28 +251,102 @@ class EmergencyAlertMonitor:
         
         return any(keyword in content for keyword in self.critical_keywords)
 
+    def scrape_web_source(self, url: str, source_name: str) -> List[Dict[str, Any]]:
+        """Scrape emergency alerts from web pages"""
+        alerts = []
+        
+        try:
+            response = self.session.get(url)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            if 'emergency' in source_name:
+                # Look for emergency announcements
+                alert_selectors = [
+                    '.alert', '.emergency', '.notice', '.announcement',
+                    '[class*="alert"]', '[class*="emergency"]', '[class*="notice"]'
+                ]
+                
+                for selector in alert_selectors:
+                    elements = soup.select(selector)
+                    for elem in elements:
+                        text = elem.get_text(strip=True)
+                        if len(text) > 20 and any(keyword in text.lower() for keyword in self.critical_keywords):
+                            alerts.append({
+                                'id': f"{source_name}_{hash(text)}",
+                                'title': text[:100] + '...' if len(text) > 100 else text,
+                                'description': text[:500],
+                                'link': url,
+                                'published': datetime.utcnow().isoformat(),
+                                'source': source_name,
+                                'scraped_at': datetime.utcnow().isoformat()
+                            })
+            
+            elif 'news' in source_name:
+                # Look for recent news that might include emergencies
+                article_selectors = [
+                    'article', '.news-item', '.card', '[class*="article"]',
+                    'h2 a', 'h3 a', '.title a'
+                ]
+                
+                for selector in article_selectors:
+                    elements = soup.select(selector)[:10]  # Recent items
+                    for elem in elements:
+                        if elem.name == 'a':
+                            title = elem.get_text(strip=True)
+                            link = elem.get('href', '')
+                        else:
+                            title_elem = elem.find(['h1', 'h2', 'h3', 'h4'])
+                            title = title_elem.get_text(strip=True) if title_elem else elem.get_text(strip=True)[:100]
+                            link_elem = elem.find('a')
+                            link = link_elem.get('href', '') if link_elem else url
+                        
+                        if any(keyword in title.lower() for keyword in ['emergency', 'alert', 'closure', 'weather']):
+                            alerts.append({
+                                'id': f"{source_name}_{hash(title)}",
+                                'title': title,
+                                'description': title,
+                                'link': self.resolve_url(link, url),
+                                'published': datetime.utcnow().isoformat(),
+                                'source': source_name,
+                                'scraped_at': datetime.utcnow().isoformat()
+                            })
+                            
+        except Exception as e:
+            logger.error(f"Error scraping {source_name}: {e}")
+            
+        return alerts
+    
+    def resolve_url(self, link: str, base_url: str) -> str:
+        """Resolve relative URLs to absolute URLs"""
+        if link.startswith('http'):
+            return link
+        elif link.startswith('/'):
+            from urllib.parse import urlparse
+            parsed = urlparse(base_url)
+            return f"{parsed.scheme}://{parsed.netloc}{link}"
+        else:
+            return f"{base_url.rstrip('/')}/{link}"
+
     def save_alerts(self, alerts_data: Dict[str, Any]):
-        """Save alerts data to files"""
+        """Save alerts to files with timestamps"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Save all alerts
         all_alerts_file = os.path.join(self.data_dir, f"all_alerts_{timestamp}.json")
         with open(all_alerts_file, 'w', encoding='utf-8') as f:
             json.dump(alerts_data, f, indent=2, ensure_ascii=False)
-        
+            
         # Save critical alerts separately if any exist
         if alerts_data['critical_alerts']:
             critical_file = os.path.join(self.data_dir, "critical-alerts.json")
-            critical_data = {
-                'alerts': alerts_data['critical_alerts'],
-                'timestamp': alerts_data['check_timestamp'],
-                'count': len(alerts_data['critical_alerts'])
-            }
-            
             with open(critical_file, 'w', encoding='utf-8') as f:
-                json.dump(critical_data, f, indent=2, ensure_ascii=False)
-            
-            logger.warning(f"CRITICAL ALERTS FOUND: {len(alerts_data['critical_alerts'])}")
+                json.dump({
+                    'alerts': alerts_data['critical_alerts'],
+                    'count': len(alerts_data['critical_alerts']),
+                    'updated': alerts_data['check_timestamp']
+                }, f, indent=2, ensure_ascii=False)
         
         logger.info(f"Saved alerts data to {all_alerts_file}")
 
@@ -261,7 +369,7 @@ class EmergencyAlertMonitor:
         return {
             'total_alerts': total_alerts,
             'critical_alerts': critical_count,
-            'feeds_checked': len(self.feeds),
+            'feeds_checked': len(self.feeds) + len(self.web_sources),
             'successful_feeds': len([s for s in alerts_data['feed_statuses'].values() 
                                    if s['status'] == 'success']),
             'timestamp': alerts_data['check_timestamp']
