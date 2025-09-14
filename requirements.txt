@@ -21,7 +21,7 @@ redis==5.0.1
 celery==5.3.4
 
 # Web Scraping & Processing
-scrapy==2.11.0
+scrapy==2.11.2
 scrapy-splash==0.8.0
 newspaper3k==0.2.8
 nltk==3.8.1
