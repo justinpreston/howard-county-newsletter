@@ -24,7 +24,7 @@ celery==5.3.4
 scrapy==2.11.0
 scrapy-splash==0.8.0
 newspaper3k==0.2.8
-nltk==3.8.1
+nltk==3.9
 spacy==3.7.2
 textblob==0.17.1
 
