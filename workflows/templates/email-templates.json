@@ -1,0 +1,19 @@
+{
+  "emailTemplates": {
+    "welcome": {
+      "subject": "Welcome to the Howard County Newsletter!",
+      "html": "<h1>Welcome!</h1><p>Thank you for subscribing to the Howard County Newsletter. Stay tuned for the latest updates and news.</p>",
+      "plainText": "Welcome!\n\nThank you for subscribing to the Howard County Newsletter. Stay tuned for the latest updates and news."
+    },
+    "weeklyDigest": {
+      "subject": "Your Weekly Digest - Howard County",
+      "html": "<h1>Weekly Digest</h1><p>Here are the top stories from this week:</p><div>{{content}}</div>",
+      "plainText": "Weekly Digest\n\nHere are the top stories from this week:\n{{content}}"
+    },
+    "unsubscribe": {
+      "subject": "Unsubscribe Confirmation",
+      "html": "<h1>Unsubscribe</h1><p>You have been successfully unsubscribed from the Howard County Newsletter.</p>",
+      "plainText": "Unsubscribe\n\nYou have been successfully unsubscribed from the Howard County Newsletter."
+    }
+  }
+}

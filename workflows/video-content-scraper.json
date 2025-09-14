@@ -1,0 +1,498 @@
+{
+  "name": "Howard County Video Content Scraper",
+  "meta": {
+    "instanceId": "video-content-scraper",
+    "description": "Comprehensive workflow for scraping, processing, and analyzing Howard County meeting videos from Granicus and YouTube platforms"
+  },
+  "nodes": [
+    {
+      "id": "V1",
+      "name": "Schedule Video Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "position": [100, 300],
+      "typeVersion": 1
+    },
+    {
+      "id": "V2",
+      "name": "Scrape Granicus Archive",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "url": "https://howardcounty.granicus.com/ViewPublisher.php?view_id=2",
+        "method": "GET",
+        "responseFormat": "string",
+        "options": {
+          "timeout": 30000,
+          "headers": {
+            "User-Agent": "Mozilla/5.0 (compatible; Newsletter Bot)"
+          }
+        }
+      },
+      "position": [300, 300],
+      "typeVersion": 1
+    },
+    {
+      "id": "V3",
+      "name": "Parse Video List HTML",
+      "type": "n8n-nodes-base.htmlExtract",
+      "parameters": {
+        "extractionValues": {
+          "values": [
+            {
+              "key": "meeting_title",
+              "cssSelector": ".meetingRow .title a",
+              "returnValue": "text",
+              "multiple": true
+            },
+            {
+              "key": "meeting_date",
+              "cssSelector": ".meetingRow .date",
+              "returnValue": "text",
+              "multiple": true
+            },
+            {
+              "key": "video_link",
+              "cssSelector": ".meetingRow .video a",
+              "returnValue": "attribute",
+              "attribute": "href",
+              "multiple": true
+            },
+            {
+              "key": "agenda_link",
+              "cssSelector": ".meetingRow .agenda a",
+              "returnValue": "attribute",
+              "attribute": "href",
+              "multiple": true
+            }
+          ]
+        }
+      },
+      "position": [500, 300],
+      "typeVersion": 1
+    },
+    {
+      "id": "V4",
+      "name": "Granicus API Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "url": "https://howardcounty.granicus.com/api/v2/events",
+        "method": "GET",
+        "responseFormat": "json",
+        "options": {
+          "qs": {
+            "limit": 20,
+            "sort": "-start_time",
+            "filter[status]": "completed"
+          }
+        }
+      },
+      "position": [300, 500],
+      "typeVersion": 1
+    },
+    {
+      "id": "V5",
+      "name": "Process Video Metadata",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "language": "javascript",
+        "code": "// Process Granicus API response or scraped data\nconst videos = $input.all();\nconst processedVideos = [];\n\nvideos.forEach(video => {\n  const data = video.json;\n  \n  // Extract video ID from URL if present\n  let videoId = null;\n  if (data.video_link) {\n    const match = data.video_link.match(/clip_id=(\\d+)/);\n    videoId = match ? match[1] : null;\n  }\n  \n  // Construct direct video URLs\n  const baseUrl = 'https://howardcounty.granicus.com';\n  \n  processedVideos.push({\n    title: data.meeting_title || data.title,\n    date: data.meeting_date || data.start_time,\n    video_id: videoId,\n    direct_video_url: videoId ? `${baseUrl}/MediaPlayer.php?clip_id=${videoId}` : null,\n    streaming_url: videoId ? `${baseUrl}/MediaPlayer.php?view_id=2&clip_id=${videoId}&meta_id=1` : null,\n    download_url: videoId ? `${baseUrl}/MediaDownload.php?clip_id=${videoId}` : null,\n    agenda_url: data.agenda_link,\n    minutes_url: data.minutes_link,\n    duration: data.duration,\n    type: detectMeetingType(data.meeting_title || data.title)\n  });\n});\n\nfunction detectMeetingType(title) {\n  const titleLower = title.toLowerCase();\n  if (titleLower.includes('legislative')) return 'legislative';\n  if (titleLower.includes('hearing')) return 'public_hearing';\n  if (titleLower.includes('work session')) return 'work_session';\n  if (titleLower.includes('zoning')) return 'zoning';\n  if (titleLower.includes('budget')) return 'budget';\n  return 'regular';\n}\n\nreturn processedVideos;"
+      },
+      "position": [700, 400],
+      "typeVersion": 1
+    },
+    {
+      "id": "V6",
+      "name": "Check New Videos",
+      "type": "n8n-nodes-base.postgres",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT video_id FROM council_videos WHERE video_id = ANY($1::text[])",
+        "additionalFields": {
+          "queryParams": "={{ $json.video_ids }}"
+        }
+      },
+      "position": [900, 400],
+      "typeVersion": 1
+    },
+    {
+      "id": "V7",
+      "name": "Download Video Transcript",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "url": "={{ $json.streaming_url }}",
+        "method": "GET",
+        "responseFormat": "string",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "position": [1100, 300],
+      "typeVersion": 1
+    },
+    {
+      "id": "V8",
+      "name": "Extract Closed Captions",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "language": "javascript",
+        "code": "// Extract closed captions from Granicus player page\nconst html = $json.response;\nlet transcript = '';\n\n// Look for VTT (WebVTT) caption file\nconst vttMatch = html.match(/captions.*?\\.vtt/gi);\nif (vttMatch) {\n  const vttUrl = `https://howardcounty.granicus.com/${vttMatch[0]}`;\n  // This would need another HTTP request to fetch the VTT file\n  return {\n    caption_url: vttUrl,\n    has_captions: true,\n    video_id: $json.video_id\n  };\n}\n\n// Alternative: Look for embedded transcript\nconst transcriptMatch = html.match(/<div[^>]*class=\"transcript\"[^>]*>([\\s\\S]*?)<\\/div>/i);\nif (transcriptMatch) {\n  transcript = transcriptMatch[1]\n    .replace(/<[^>]*>/g, '') // Remove HTML tags\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .trim();\n}\n\nreturn {\n  transcript: transcript,\n  has_captions: transcript.length > 0,\n  video_id: $json.video_id,\n  needs_transcription: transcript.length === 0\n};"
+      },
+      "position": [1300, 300],
+      "typeVersion": 1
+    },
+    {
+      "id": "V9",
+      "name": "Download Video for Transcription",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "language": "javascript",
+        "code": "// For videos without captions, prepare for transcription\n// Note: Actual video download would require handling streaming protocols\n\nif ($json.needs_transcription) {\n  return {\n    video_id: $json.video_id,\n    download_url: $json.download_url,\n    // You might need to use youtube-dl or similar tool\n    download_command: `youtube-dl -f best -o \"${$json.video_id}.mp4\" \"${$json.streaming_url}\"`,\n    transcription_required: true\n  };\n}\n\nreturn {\n  video_id: $json.video_id,\n  transcript: $json.transcript,\n  transcription_required: false\n};"
+      },
+      "position": [1500, 300],
+      "typeVersion": 1
+    },
+    {
+      "id": "V10",
+      "name": "Whisper Transcription",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $credentials.openAiApi.apiKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "file",
+              "value": "={{ $binary.data }}"
+            },
+            {
+              "name": "model",
+              "value": "whisper-1"
+            },
+            {
+              "name": "response_format",
+              "value": "verbose_json"
+            },
+            {
+              "name": "prompt",
+              "value": "This is a Howard County Council meeting. Speakers may include Council members Calvin Ball, Deb Jung, Christiana Rigby, David Yungmann, and Liz Walsh."
+            }
+          ]
+        }
+      },
+      "position": [1700, 300],
+      "typeVersion": 1
+    },
+    {
+      "id": "V11",
+      "name": "Process Transcript with AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $credentials.claudeApi.apiKey }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "claude-3-haiku-20240307"
+            },
+            {
+              "name": "max_tokens",
+              "value": 2000
+            },
+            {
+              "name": "messages",
+              "value": "[{\"role\": \"user\", \"content\": \"Analyze this Howard County Council meeting transcript and provide:\\n\\n1. KEY DECISIONS: What was voted on and the results\\n2. IMPORTANT DISCUSSIONS: Main topics debated\\n3. PUBLIC TESTIMONY: Summary of citizen comments\\n4. ACTION ITEMS: What happens next\\n5. AFFECTED AREAS: Which neighborhoods/districts are impacted\\n\\nTranscript: {{ $json.transcript }}\"}]"
+            }
+          ]
+        }
+      },
+      "position": [1900, 300],
+      "typeVersion": 1
+    },
+    {
+      "id": "V12",
+      "name": "Extract Key Moments",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "language": "javascript",
+        "code": "// Extract timestamps for key moments in the video\nconst transcript = $json.transcript;\nconst segments = $json.segments || [];\n\nconst keyMoments = [];\nconst importantPhrases = [\n  'motion passes', 'motion fails', 'vote', 'approved', 'denied',\n  'public testimony', 'citizen comment', 'budget', 'zoning',\n  'development', 'school', 'police', 'fire department'\n];\n\nsegments.forEach(segment => {\n  const text = segment.text.toLowerCase();\n  importantPhrases.forEach(phrase => {\n    if (text.includes(phrase)) {\n      keyMoments.push({\n        timestamp: segment.start,\n        end_time: segment.end,\n        text: segment.text,\n        type: phrase,\n        video_timestamp_url: `${$json.streaming_url}&t=${Math.floor(segment.start)}`\n      });\n    }\n  });\n});\n\n// Sort by timestamp\nkeyMoments.sort((a, b) => a.timestamp - b.timestamp);\n\nreturn {\n  video_id: $json.video_id,\n  title: $json.title,\n  date: $json.date,\n  key_moments: keyMoments.slice(0, 10), // Top 10 moments\n  total_duration: $json.duration,\n  has_votes: keyMoments.some(m => m.type.includes('vote')),\n  has_public_comment: keyMoments.some(m => m.type.includes('testimony') || m.type.includes('comment'))\n};"
+      },
+      "position": [2100, 300],
+      "typeVersion": 1
+    },
+    {
+      "id": "V13",
+      "name": "Generate Video Summary",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "language": "javascript",
+        "code": "// Create newsletter-ready video summary\nconst video = $json;\n\nconst summary = {\n  headline: `${video.title} - ${video.date}`,\n  quick_summary: video.ai_summary,\n  key_decisions: video.decisions || [],\n  video_link: video.streaming_url,\n  watch_time: Math.ceil(video.total_duration / 60) + ' minutes',\n  highlights: video.key_moments.map(moment => ({\n    time: formatTime(moment.timestamp),\n    description: moment.text.substring(0, 100) + '...',\n    direct_link: moment.video_timestamp_url\n  })),\n  topics: extractTopics(video.ai_summary),\n  neighborhoods_mentioned: extractNeighborhoods(video.ai_summary)\n};\n\nfunction formatTime(seconds) {\n  const hours = Math.floor(seconds / 3600);\n  const minutes = Math.floor((seconds % 3600) / 60);\n  const secs = Math.floor(seconds % 60);\n  \n  if (hours > 0) {\n    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;\n  }\n  return `${minutes}:${secs.toString().padStart(2, '0')}`;\n}\n\nfunction extractTopics(text) {\n  const topics = [];\n  const topicKeywords = {\n    'education': ['school', 'education', 'student'],\n    'development': ['zoning', 'development', 'construction'],\n    'budget': ['budget', 'fiscal', 'spending'],\n    'public_safety': ['police', 'fire', 'emergency'],\n    'transportation': ['road', 'traffic', 'transit']\n  };\n  \n  for (const [topic, keywords] of Object.entries(topicKeywords)) {\n    if (keywords.some(keyword => text.toLowerCase().includes(keyword))) {\n      topics.push(topic);\n    }\n  }\n  \n  return topics;\n}\n\nfunction extractNeighborhoods(text) {\n  const neighborhoods = [];\n  const neighborhoodList = [\n    'Columbia', 'Ellicott City', 'Elkridge', 'Clarksville',\n    'Laurel', 'Savage', 'Fulton', 'Highland'\n  ];\n  \n  neighborhoodList.forEach(neighborhood => {\n    if (text.includes(neighborhood)) {\n      neighborhoods.push(neighborhood.toLowerCase().replace(' ', '_'));\n    }\n  });\n  \n  return neighborhoods.length > 0 ? neighborhoods : ['county_wide'];\n}\n\nreturn summary;"
+      },
+      "position": [2300, 300],
+      "typeVersion": 1
+    },
+    {
+      "id": "V14",
+      "name": "Store Video Content",
+      "type": "n8n-nodes-base.postgres",
+      "parameters": {
+        "operation": "insert",
+        "table": "council_videos",
+        "columns": "video_id,title,date,url,transcript,ai_summary,key_moments,topics,neighborhoods,duration,has_captions,processed_date",
+        "additionalFields": {}
+      },
+      "position": [2500, 300],
+      "typeVersion": 1
+    },
+    {
+      "id": "V15",
+      "name": "YouTube Integration",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/search",
+        "method": "GET",
+        "options": {
+          "qs": {
+            "key": "={{ $credentials.youtubeApi.apiKey }}",
+            "channelId": "UC6ImqPHwPnqp7MnCxnhBPMA",
+            "part": "snippet",
+            "order": "date",
+            "maxResults": 10,
+            "type": "video",
+            "q": "council meeting"
+          }
+        }
+      },
+      "position": [300, 700],
+      "typeVersion": 1
+    },
+    {
+      "id": "V16",
+      "name": "Process YouTube Videos",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "language": "javascript",
+        "code": "// Process YouTube API response\nconst videos = $json.items || [];\nconst processedVideos = [];\n\nvideos.forEach(video => {\n  processedVideos.push({\n    video_id: video.id.videoId,\n    title: video.snippet.title,\n    description: video.snippet.description,\n    published_date: video.snippet.publishedAt,\n    thumbnail: video.snippet.thumbnails.high.url,\n    youtube_url: `https://www.youtube.com/watch?v=${video.id.videoId}`,\n    channel: video.snippet.channelTitle,\n    // Check if it's a council meeting\n    is_council_meeting: video.snippet.title.toLowerCase().includes('council') ||\n                       video.snippet.title.toLowerCase().includes('meeting'),\n    // YouTube automatic captions are usually available\n    captions_url: `https://www.youtube.com/api/timedtext?v=${video.id.videoId}&lang=en&fmt=srv3`\n  });\n});\n\nreturn processedVideos;"
+      },
+      "position": [500, 700],
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Schedule Video Check": {
+      "main": [
+        [
+          {
+            "node": "Scrape Granicus Archive",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Granicus API Call",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "YouTube Integration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Granicus Archive": {
+      "main": [
+        [
+          {
+            "node": "Parse Video List HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Video List HTML": {
+      "main": [
+        [
+          {
+            "node": "Process Video Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Granicus API Call": {
+      "main": [
+        [
+          {
+            "node": "Process Video Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Video Metadata": {
+      "main": [
+        [
+          {
+            "node": "Check New Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check New Videos": {
+      "main": [
+        [
+          {
+            "node": "Download Video Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Video Transcript": {
+      "main": [
+        [
+          {
+            "node": "Extract Closed Captions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Closed Captions": {
+      "main": [
+        [
+          {
+            "node": "Download Video for Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Video for Transcription": {
+      "main": [
+        [
+          {
+            "node": "Whisper Transcription",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Process Transcript with AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Transcript with AI": {
+      "main": [
+        [
+          {
+            "node": "Extract Key Moments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Key Moments": {
+      "main": [
+        [
+          {
+            "node": "Generate Video Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video Summary": {
+      "main": [
+        [
+          {
+            "node": "Store Video Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube Integration": {
+      "main": [
+        [
+          {
+            "node": "Process YouTube Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process YouTube Videos": {
+      "main": [
+        [
+          {
+            "node": "Process Video Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["video", "content", "scraping", "granicus", "youtube", "meetings"],
+  "triggerCount": 1,
+  "updatedAt": "2025-09-14T00:00:00.000Z",
+  "versionId": "1.0.0"
+}

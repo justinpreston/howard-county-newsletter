@@ -1,0 +1,105 @@
+# Environment and Configuration Files
+.env
+.env.local
+.env.production
+config/environment.json
+credentials/
+
+# API Keys and Secrets  
+**/api-keys.json
+**/service-account.json
+**/firebase-service-account.json
+
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python virtual environment
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Database files
+*.db
+*.sqlite3
+database.sql
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+.nyc_output
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# Docker
+docker-compose.override.yml
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup files
+backups/
+*.backup
+*.bak
+
+# Test data
+test-data/
+sample-data/
+
+# Production builds
+dist/
+build/
+
+# Temporary files
+tmp/
+temp/
+
+# Scraped data (contains potentially sensitive government info)
+data/*/
+!data/.gitkeep
+
+# Processing logs
+logs/
+*.log

@@ -1,0 +1,331 @@
+name: Howard County Data Collection Pipeline
+
+on:
+  schedule:
+    # Run every 4 hours during business days
+    - cron: '0 */4 * * 1-5'
+    # Run once daily on weekends
+    - cron: '0 8 * * 0,6'
+  workflow_dispatch: # Allow manual triggers
+  push:
+    paths:
+      - 'scrapers/**'
+      - '.github/workflows/data-collection.yml'
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  scrape-government-data:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        source: [
+          'county-council',
+          'planning-zoning', 
+          'hcpss-education',
+          'public-safety',
+          'public-works',
+          'emergency-alerts'
+        ]
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install Python Dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install beautifulsoup4 selenium requests pandas lxml
+
+    - name: Install Chrome for Selenium
+      uses: browser-actions/setup-chrome@latest
+      with:
+        chrome-version: stable
+
+    - name: Setup ChromeDriver
+      uses: nanasess/setup-chromedriver@master
+
+    - name: Run Data Scraping
+      env:
+        SCRAPER_USER_AGENT: "Mozilla/5.0 (compatible; HowardCountyNews-Bot/1.0; +https://howardcountynews.local/bot)"
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      run: |
+        python scrapers/${{ matrix.source }}-scraper.py
+        
+    - name: Validate Scraped Data
+      run: |
+        python scripts/validate-data.py --source ${{ matrix.source }}
+        
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.source }}-data-${{ github.run_id }}
+        path: |
+          data/${{ matrix.source }}/*.json
+          data/${{ matrix.source }}/*.csv
+          logs/${{ matrix.source }}-*.log
+        retention-days: 30
+
+    - name: Trigger n8n Workflow
+      if: success()
+      run: |
+        curl -X POST "${{ secrets.N8N_WEBHOOK_URL }}" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "source": "${{ matrix.source }}",
+            "run_id": "${{ github.run_id }}",
+            "artifact_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",
+            "status": "success"
+          }'
+
+  process-video-content:
+    runs-on: ubuntu-latest
+    needs: scrape-government-data
+    if: contains(github.event.schedule, '8') # Only run on morning schedule
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install Video Processing Dependencies
+      run: |
+        pip install yt-dlp whisper-openai requests
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+
+    - name: Download Government Meeting Videos
+      env:
+        GRANICUS_API_KEY: ${{ secrets.GRANICUS_API_KEY }}
+        YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      run: |
+        python scrapers/video-discovery.py
+        python scrapers/video-download.py
+
+    - name: Process Video Transcriptions
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        python processors/whisper-transcription.py
+
+    - name: AI Content Analysis
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        python processors/ai-content-analysis.py
+
+    - name: Upload Video Processing Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: video-processing-${{ github.run_id }}
+        path: |
+          data/videos/*.json
+          data/transcripts/*.txt
+          data/analysis/*.json
+
+  emergency-monitoring:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Monitor Emergency Feeds
+      env:
+        TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+        TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+        SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+        FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      run: |
+        python monitors/emergency-alert-monitor.py
+
+    - name: Check for Critical Alerts
+      id: alert-check
+      run: |
+        if [ -f "data/emergency/critical-alerts.json" ]; then
+          echo "critical_alerts=true" >> $GITHUB_OUTPUT
+        else
+          echo "critical_alerts=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Trigger Immediate Newsletter
+      if: steps.alert-check.outputs.critical_alerts == 'true'
+      run: |
+        curl -X POST "${{ secrets.N8N_EMERGENCY_WEBHOOK_URL }}" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "emergency": true,
+            "trigger_immediate": true,
+            "alert_data": '"$(cat data/emergency/critical-alerts.json)"',
+            "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
+          }'
+
+  data-quality-report:
+    runs-on: ubuntu-latest
+    needs: [scrape-government-data, process-video-content]
+    if: always()
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts/
+
+    - name: Generate Data Quality Report
+      run: |
+        python scripts/generate-quality-report.py
+        
+    - name: Upload Quality Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: data-quality-report-${{ github.run_id }}
+        path: |
+          reports/*.json
+          reports/*.html
+
+    - name: Send Quality Report to n8n
+      if: success()
+      run: |
+        curl -X POST "${{ secrets.N8N_QUALITY_WEBHOOK_URL }}" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "report_type": "data_quality",
+            "run_id": "${{ github.run_id }}",
+            "report_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "summary": '"$(cat reports/summary.json)"',
+            "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
+          }'
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: scrape-government-data
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install Dependencies
+      run: npm install
+
+    - name: Test API Integrations
+      env:
+        ZAPIER_WEBHOOK_URL: ${{ secrets.ZAPIER_WEBHOOK_URL }}
+        MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
+        WEBFLOW_API_KEY: ${{ secrets.WEBFLOW_API_KEY }}
+        CANVA_API_KEY: ${{ secrets.CANVA_API_KEY }}
+        MAILCHIMP_API_KEY: ${{ secrets.MAILCHIMP_API_KEY }}
+        PLAUSIBLE_API_KEY: ${{ secrets.PLAUSIBLE_API_KEY }}
+      run: |
+        npm test -- --grep "integration"
+        
+    - name: Test n8n Workflow Connectivity
+      run: |
+        node tests/test-n8n-integration.js
+
+    - name: Validate Multi-Platform Sync
+      run: |
+        node tests/test-platform-sync.js
+
+  performance-optimization:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' && contains(github.event.schedule, '8') # Daily morning run
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Analyze Processing Performance
+      run: |
+        python scripts/performance-analysis.py
+
+    - name: Optimize Caching Strategy
+      run: |
+        python scripts/cache-optimization.py
+
+    - name: Cost Analysis Report
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      run: |
+        python scripts/cost-analysis.py
+
+    - name: Upload Performance Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-report-${{ github.run_id }}
+        path: |
+          reports/performance/*.json
+          reports/costs/*.csv
+
+  cleanup-old-data:
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 8 * * 0' # Weekly on Sunday
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Clean Old Artifacts
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          const runs = await github.rest.actions.listWorkflowRuns({
+            owner,
+            repo,
+            workflow_id: 'data-collection.yml',
+            per_page: 100
+          });
+          
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          
+          for (const run of runs.data.workflow_runs) {
+            if (new Date(run.created_at) < thirtyDaysAgo) {
+              await github.rest.actions.deleteWorkflowRun({
+                owner,
+                repo,
+                run_id: run.id
+              });
+            }
+          }
+
+    - name: Archive Old Data
+      run: |
+        python scripts/archive-old-data.py --days 90

@@ -1,0 +1,292 @@
+{
+  "name": "Emergency Alert Monitor",
+  "meta": {
+    "instanceId": "emergency-alert-monitor",
+    "description": "Monitors multiple emergency feeds and sends immediate alerts for critical situations affecting Howard County residents"
+  },
+  "nodes": [
+    {
+      "id": "EA1",
+      "name": "Poll Emergency Feed",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "position": [100, 200]
+    },
+    {
+      "id": "EA2",
+      "name": "Check Police Alerts",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "url": "https://www.howardcountymd.gov/police/alerts/feed",
+        "method": "GET"
+      },
+      "position": [300, 100]
+    },
+    {
+      "id": "EA3",
+      "name": "Check Weather Warnings",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "url": "https://api.weather.gov/alerts/active?area=MD",
+        "method": "GET"
+      },
+      "position": [300, 200]
+    },
+    {
+      "id": "EA4",
+      "name": "Check School Closures",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "url": "https://www.hcpss.org/closures/api",
+        "method": "GET"
+      },
+      "position": [300, 300]
+    },
+    {
+      "id": "EA5",
+      "name": "Filter Critical Alerts",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "code": "// Determine if alert is critical enough for immediate notification\nconst alerts = $input.all();\nconst critical = [];\n\nalerts.forEach(alert => {\n  const severity = alert.json.severity || alert.json.priority;\n  \n  // Define critical conditions\n  const criticalKeywords = [\n    'evacuation', 'shelter in place', 'active shooter',\n    'tornado warning', 'flash flood warning', 'hazmat',\n    'school closure', 'boil water', 'power outage'\n  ];\n  \n  const isCritical = criticalKeywords.some(keyword => \n    JSON.stringify(alert).toLowerCase().includes(keyword)\n  );\n  \n  if (isCritical || severity === 'extreme' || severity === 'severe') {\n    critical.push({\n      type: alert.json.type,\n      message: alert.json.message,\n      area: alert.json.affected_area,\n      timestamp: new Date().toISOString()\n    });\n  }\n});\n\nreturn critical.length > 0 ? critical : null;"
+      },
+      "position": [500, 200]
+    },
+    {
+      "id": "EA6",
+      "name": "Check If New Alert",
+      "type": "n8n-nodes-base.postgres",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM emergency_alerts WHERE alert_hash = $1 AND created_at > NOW() - INTERVAL '24 hours'",
+        "additionalFields": {
+          "queryParams": "={{ $json.hash }}"
+        }
+      },
+      "position": [700, 200]
+    },
+    {
+      "id": "EA7",
+      "name": "Format Emergency Message",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "code": "const alert = $json;\n\nconst smsMessage = `🚨 HOWARD COUNTY ALERT: ${alert.message.substring(0, 140)}... Reply STOP to unsubscribe`;\n\nconst emailHtml = `\n<div style=\"background: #ff0000; color: white; padding: 20px; font-size: 18px;\">\n  <h1>⚠️ EMERGENCY ALERT - HOWARD COUNTY</h1>\n  <p><strong>${alert.type}</strong></p>\n  <p>${alert.message}</p>\n  <p>Affected Area: ${alert.area}</p>\n  <p>Time: ${alert.timestamp}</p>\n  <hr>\n  <p>For more information: <a href=\"https://www.howardcountymd.gov/emergency\" style=\"color: yellow;\">Emergency Info Page</a></p>\n</div>\n`;\n\nreturn {\n  sms: smsMessage,\n  email: emailHtml,\n  push: alert.message.substring(0, 100)\n};"
+      },
+      "position": [900, 200]
+    },
+    {
+      "id": "EA8",
+      "name": "Send SMS Alert",
+      "type": "n8n-nodes-base.twilio",
+      "parameters": {
+        "operation": "sendSms",
+        "from": "+14435551234",
+        "to": "={{ $json.phone }}",
+        "message": "={{ $json.sms }}"
+      },
+      "position": [1100, 100]
+    },
+    {
+      "id": "EA9",
+      "name": "Send Email Alert",
+      "type": "n8n-nodes-base.sendGrid",
+      "parameters": {
+        "operation": "send",
+        "toEmail": "={{ $json.email }}",
+        "subject": "🚨 EMERGENCY: {{ $json.type }}",
+        "html": "={{ $json.email }}",
+        "additionalFields": {
+          "priority": "high"
+        }
+      },
+      "position": [1100, 200]
+    },
+    {
+      "id": "EA10",
+      "name": "Push to Mobile App",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "url": "https://fcm.googleapis.com/fcm/send",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "to",
+              "value": "/topics/emergency_alerts"
+            },
+            {
+              "name": "notification",
+              "value": "={{ $json.push }}"
+            },
+            {
+              "name": "priority",
+              "value": "high"
+            }
+          ]
+        }
+      },
+      "position": [1100, 300]
+    },
+    {
+      "id": "EA11",
+      "name": "Log Alert",
+      "type": "n8n-nodes-base.postgres",
+      "parameters": {
+        "operation": "insert",
+        "table": "emergency_alerts",
+        "columns": "alert_hash,type,message,area,severity,sent_count,created_at"
+      },
+      "position": [1300, 200]
+    }
+  ],
+  "connections": {
+    "Poll Emergency Feed": {
+      "main": [
+        [
+          {
+            "node": "Check Police Alerts",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Weather Warnings",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check School Closures",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Police Alerts": {
+      "main": [
+        [
+          {
+            "node": "Filter Critical Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Weather Warnings": {
+      "main": [
+        [
+          {
+            "node": "Filter Critical Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check School Closures": {
+      "main": [
+        [
+          {
+            "node": "Filter Critical Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Critical Alerts": {
+      "main": [
+        [
+          {
+            "node": "Check If New Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If New Alert": {
+      "main": [
+        [
+          {
+            "node": "Format Emergency Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Emergency Message": {
+      "main": [
+        [
+          {
+            "node": "Send SMS Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Email Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Push to Mobile App",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send SMS Alert": {
+      "main": [
+        [
+          {
+            "node": "Log Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Alert": {
+      "main": [
+        [
+          {
+            "node": "Log Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push to Mobile App": {
+      "main": [
+        [
+          {
+            "node": "Log Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["emergency", "alerts", "howard-county", "notifications"],
+  "triggerCount": 1,
+  "updatedAt": "2025-09-14T00:00:00.000Z",
+  "versionId": "1.0.0"
+}
