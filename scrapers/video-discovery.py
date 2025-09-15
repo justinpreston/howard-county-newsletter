@@ -46,7 +46,7 @@ class VideoProcessor:
             },
             'youtube': {
                 'name': 'Howard County YouTube',
-                'channel_id': 'UC_HOWARD_COUNTY_CHANNEL_ID',  # Replace with actual
+                'channel_id': 'UCG_SIKugxRo-OMbnfDLdGUg',  # Howard County Maryland official channel
                 'api_key': os.getenv('YOUTUBE_API_KEY')
             },
             'facebook': {
