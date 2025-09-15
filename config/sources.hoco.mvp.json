@@ -6,13 +6,18 @@
   "sources": [
     {
       "id": "hoco_council_granicus",
-      "name": "Howard County Council — Granicus",
+      "name": "Howard County Council — Calendar",
       "category": "government",
-      "feed_type": "rss",
-      "discovery_url": "https://howardcounty.granicus.com/ViewPublisher.php?view_id=23",
-      "feed_url": null,
-      "strategy": "discover_rss_on_page",
-      "notes": "Page exposes RSS for agendas/minutes/podcasts. Your scraper should parse the page and capture the RSS link(s)."
+      "feed_type": "html_list",
+      "list_url": "https://cc.howardcountymd.gov/",
+      "selectors": {
+        "item": ".calendar-item, .event, .field--name-field-date",
+        "date": ".date-display-single, .date-display-start, .event-date, .field--name-field-date",
+        "title": ".field-content a, .event-title a, h3 a, .field--name-title a",
+        "link": ".field-content a, .event-title a, h3 a, .field--name-title a"
+      },
+      "strategy": "scrape_list",
+      "notes": "Howard County Council meeting calendar with events and hearings."
     },
     {
       "id": "hoco_council_hearings",
@@ -66,9 +71,9 @@
       "feed_type": "ics_per_event",
       "list_url": "https://howardcounty.librarycalendar.com/events/upcoming",
       "selectors": {
-        "item": ".lm_event, .views-row, .event-teaser",
-        "title": "a",
-        "link": "a[href]",
+        "item": ".views-row, .event-item, .field--name-field-date",
+        "title": "h3 a, .field--name-title a, .event-title a",
+        "link": "h3 a, .field--name-title a, .event-title a",
         "ics_link": "a[href$='.ics'], a[download$='.ics']"
       },
       "strategy": "follow_event_then_download_ics",
