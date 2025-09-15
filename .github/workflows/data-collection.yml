@@ -70,7 +70,7 @@ jobs:
     - name: Validate Scraped Data
       run: |
         if [ -f "scripts/validate-data.py" ]; then
-          python scripts/validate-data.py
+          python scripts/validate-data.py --source universal
         else
           echo "Validation script not found, skipping validation..."
         fi
