@@ -35,31 +35,37 @@ jobs:
 
     - name: Create Output Directories
       run: |
-        mkdir -p data/county-council data/emergency data/videos data/logs logs
+        mkdir -p data/county-council data/emergency data/videos data/universal data/logs logs
 
-    - name: Run County Council Scraper
+    - name: Run Universal Scraper - All Sources
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      run: |
-        python scrapers/county-council-scraper.py
-        
-    - name: Run Emergency Alert Monitor
-      env:
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
         TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
         SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
       run: |
-        python scrapers/emergency-alert-monitor.py
+        python scrapers/universal-scraper.py
         
-    - name: Run Video Discovery
+    - name: Run Universal Scraper - Test Priority Sources
       env:
-        YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
       run: |
-        python scrapers/video-discovery.py
+        python scrapers/universal-scraper.py "hoco_council_granicus,hcpss_board_calendar,hcls_events"
+        
+    - name: Run Legacy Scrapers (Fallback)
+      if: failure()
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      run: |
+        python scrapers/county-council-scraper.py || echo "County council scraper failed"
+        python scrapers/emergency-alert-monitor.py || echo "Emergency monitor failed"
+        python scrapers/video-discovery.py || echo "Video discovery failed"
 
     - name: Validate Scraped Data
       run: |

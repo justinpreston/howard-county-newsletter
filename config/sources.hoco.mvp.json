@@ -1,0 +1,177 @@
+{
+  "version": "1.0",
+  "name": "howard_county_newsletter_mvp",
+  "timezone": "America/New_York",
+  "default_frequency_cron": "0 7 * * *",
+  "sources": [
+    {
+      "id": "hoco_council_granicus",
+      "name": "Howard County Council — Granicus",
+      "category": "government",
+      "feed_type": "rss",
+      "discovery_url": "https://howardcounty.granicus.com/ViewPublisher.php?view_id=23",
+      "feed_url": null,
+      "strategy": "discover_rss_on_page",
+      "notes": "Page exposes RSS for agendas/minutes/podcasts. Your scraper should parse the page and capture the RSS link(s)."
+    },
+    {
+      "id": "hoco_council_hearings",
+      "name": "Howard County Council — Hearings List",
+      "category": "government",
+      "feed_type": "html_table",
+      "list_url": "https://cc.howardcountymd.gov/Calendar",
+      "selectors": {
+        "item": "table tbody tr",
+        "date": "td:nth-child(1)",
+        "title": "td:nth-child(2)",
+        "link": "td a[href]"
+      },
+      "strategy": "scrape_list",
+      "notes": "Stable table of upcoming hearings/meetings. Adjust selectors if table structure shifts."
+    },
+    {
+      "id": "hoco_planning_board",
+      "name": "Planning Board — Meetings & Materials",
+      "category": "government",
+      "feed_type": "html_list",
+      "list_url": "https://www.howardcountymd.gov/boards-commissions/planning-board",
+      "selectors": {
+        "item": ".paragraph--type--hc-listing .listing-item, .view-content .views-row",
+        "title": "a",
+        "link": "a[href]",
+        "date": ".date, .field--name-field-date"
+      },
+      "strategy": "scrape_list",
+      "notes": "Page lists meetings, agendas, and decisions in consistent blocks."
+    },
+    {
+      "id": "hoco_rec_parks",
+      "name": "Recreation & Parks — Events",
+      "category": "community",
+      "feed_type": "ics_per_event",
+      "list_url": "https://www.howardcountymd.gov/recreation-parks",
+      "selectors": {
+        "item": ".paragraph--type--hc-event-listing .event, .view-events .views-row",
+        "title": "a",
+        "link": "a[href]",
+        "ics_trigger": "button[aria-controls*='addtocal'] , .addtocal , a[href*='.ics']"
+      },
+      "strategy": "follow_event_then_download_ics",
+      "notes": "Each event page exposes an 'Add to Calendar' menu with an iCal/.ics option."
+    },
+    {
+      "id": "hcls_events",
+      "name": "Howard County Library System — Events",
+      "category": "community",
+      "feed_type": "ics_per_event",
+      "list_url": "https://howardcounty.librarycalendar.com/events/upcoming",
+      "selectors": {
+        "item": ".lm_event, .views-row, .event-teaser",
+        "title": "a",
+        "link": "a[href]",
+        "ics_link": "a[href$='.ics'], a[download$='.ics']"
+      },
+      "strategy": "follow_event_then_download_ics",
+      "notes": "LibraryCalendar platform; each event has a downloadable .ics."
+    },
+    {
+      "id": "hcpss_board_calendar",
+      "name": "HCPSS — Board of Education Calendar",
+      "category": "schools",
+      "feed_type": "ics_calendar",
+      "discovery_url": "https://www.hcpss.org/calendar",
+      "feed_url": null,
+      "strategy": "discover_ics_subscribe_link",
+      "notes": "Use 'Subscribe to the Board of Education Calendar' link to capture the .ics URL and poll weekly."
+    },
+    {
+      "id": "hoco_health_news",
+      "name": "Howard County Health Department — News",
+      "category": "health",
+      "feed_type": "html_list",
+      "list_url": "https://www.howardcountymd.gov/health",
+      "selectors": {
+        "item": ".view-news .views-row, .paragraph--type--hc-featured-news .item",
+        "title": "a",
+        "link": "a[href]",
+        "date": ".date, time, .field--name-field-date"
+      },
+      "strategy": "scrape_list",
+      "notes": "Press releases and updates appear as dated cards/rows; follow links for full text."
+    },
+    {
+      "id": "hoco_exec_ball_bulletin",
+      "name": "County Executive — Ball Bulletin",
+      "category": "executive",
+      "feed_type": "html_list",
+      "list_url": "https://www.howardcountymd.gov/county-executive/county-executive-newsletter",
+      "selectors": {
+        "item": ".field--name-field-past-newsletters a, .view-content .views-row a",
+        "title": "",
+        "link": "a[href]"
+      },
+      "strategy": "scrape_list",
+      "notes": "Past issues listed with dates; target Constant Contact links, then extract subject/date."
+    },
+    {
+      "id": "hceda_news",
+      "name": "Economic Development Authority — News & Events",
+      "category": "business",
+      "feed_type": "html_list",
+      "list_url": "https://www.hceda.org/news-events/",
+      "selectors": {
+        "item": ".post, .news-item, .et_pb_post",
+        "title": "h2 a, .entry-title a",
+        "link": "a[href]",
+        "date": "time, .published, .post-date"
+      },
+      "strategy": "scrape_list",
+      "notes": "Standard WordPress/Divi style blog list; selectors cover common patterns."
+    },
+    {
+      "id": "hoco_chamber_events",
+      "name": "Howard County Chamber — Events",
+      "category": "business",
+      "feed_type": "ics_per_event",
+      "list_url": "https://business.howardchamber.com/events",
+      "selectors": {
+        "item": ".ql-listing .ql-listing-item, .event-list .event-item, a[href*='/events/details/']",
+        "title": "a",
+        "link": "a[href]",
+        "ics_link": "a[href*='ical'] , a[data-calendar*='ics']"
+      },
+      "strategy": "follow_event_then_download_ics",
+      "notes": "Each event detail page includes an iCal option ('Add to Calendar')."
+    },
+    {
+      "id": "hoco_police_news",
+      "name": "Howard County Police — News Releases",
+      "category": "public_safety",
+      "feed_type": "html_list",
+      "list_url": "https://www.howardcountymd.gov/police",
+      "selectors": {
+        "item": ".view-news .views-row, a[href*='/news/']",
+        "title": "a",
+        "link": "a[href]",
+        "date": ".date, time"
+      },
+      "strategy": "scrape_list",
+      "notes": "Use the News/Press Releases section; follow detail pages for full text and incident summaries."
+    },
+    {
+      "id": "hoco_fire_rescue_news",
+      "name": "Fire & Rescue Services — News",
+      "category": "public_safety",
+      "feed_type": "html_list",
+      "list_url": "https://www.howardcountymd.gov/fire-and-rescue-services",
+      "selectors": {
+        "item": ".view-news .views-row, a[href*='/news/']",
+        "title": "a",
+        "link": "a[href]",
+        "date": ".date, time"
+      },
+      "strategy": "scrape_list",
+      "notes": "Press releases/advisories are posted as dated items; structure mirrors other county dept pages."
+    }
+  ]
+}
